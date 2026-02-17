@@ -13,9 +13,10 @@ import {
   LogOut,
   LayoutDashboard,
   Download,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Search
 } from 'lucide-react';
-import { User, Absence, AbsenceStatus, TeamMemberStatus } from './types';
+import { User, Absence, TeamMemberStatus } from './types';
 import { n8nService } from './services/n8nService';
 
 // --- MOCK DATA ---
@@ -25,30 +26,7 @@ const INITIAL_USERS: User[] = [
   { id: '3', name: 'Brenda Costa', email: 'bcosta@ccmtecnologia.com.br', role: 'employee' },
 ];
 
-const INITIAL_ABSENCES: Absence[] = [
-  { 
-    id: 'a1', 
-    userId: '1', 
-    userName: 'Tacio Santos', 
-    type: 'Ausência Parcial', 
-    startDate: new Date().toISOString(), 
-    endDate: new Date(Date.now() + 3600000).toISOString(), 
-    status: 'pending', 
-    reason: 'Consulta Médica',
-    requestedAt: new Date().toISOString()
-  },
-  { 
-    id: 'a2', 
-    userId: '3', 
-    userName: 'Brenda Costa', 
-    type: 'Folga', 
-    startDate: new Date().toISOString(), 
-    endDate: new Date(Date.now() + 86400000).toISOString(), 
-    status: 'approved', 
-    reason: 'Assuntos Pessoais',
-    requestedAt: new Date().toISOString()
-  }
-];
+const INITIAL_ABSENCES: Absence[] = [];
 
 const App: React.FC = () => {
   type Tab = 'dashboard' | 'pending' | 'history' | 'status' | 'users' | 'monthly_report';
@@ -76,7 +54,7 @@ const App: React.FC = () => {
     const now = currentTime.getTime();
     return users.map(user => {
       const activeAbsence = absences.find(abs => 
-        abs.userId === user.id && 
+        (abs.userId === user.id || abs.id === user.email) && 
         abs.status === 'approved' &&
         now >= new Date(abs.startDate).getTime() && 
         now <= new Date(abs.endDate).getTime()
@@ -84,6 +62,39 @@ const App: React.FC = () => {
       return { ...user, isOnline: !activeAbsence, currentAbsence: activeAbsence };
     });
   }, [users, absences, currentTime]);
+
+  /**
+   * FUNÇÃO SOLICITADA: Valida se o colaborador teve ou não uma ausência aprovada 
+   * e se está online ou não no momento por meio do nome do colaborador ou e-mail.
+   */
+  const checkCollaboratorStatus = (identifier: string) => {
+    if (!identifier) return null;
+    
+    const searchKey = identifier.toLowerCase();
+    const collaborator = teamStatus.find(m => 
+      m.name.toLowerCase() === searchKey || 
+      m.email.toLowerCase() === searchKey
+    );
+
+    if (!collaborator) {
+      return {
+        success: false,
+        message: 'Colaborador não encontrado na base de dados.'
+      };
+    }
+
+    return {
+      success: true,
+      name: collaborator.name,
+      email: collaborator.email,
+      isOnline: collaborator.isOnline,
+      hasApprovedAbsenceNow: !!collaborator.currentAbsence,
+      currentAbsenceDetails: collaborator.currentAbsence || null,
+      message: collaborator.isOnline 
+        ? `${collaborator.name} está online no momento.` 
+        : `${collaborator.name} está ausente (${collaborator.currentAbsence?.type}).`
+    };
+  };
 
   const handleApprove = (id: string) => {
     setAbsences(prev => prev.map(a => a.id === id ? { ...a, status: 'approved' } : a));
@@ -103,29 +114,100 @@ const App: React.FC = () => {
   };
 
   const addUser = () => {
-    setIsModalOpen(true); // Agora apenas abre o modal
+    setIsModalOpen(true);
+  };
+
+  const parseWebhookDateTime = (dateStr: string | null, timeStr: string | null) => {
+    if (!dateStr || dateStr === 'null') return null;
+    const [day, month, year] = dateStr.split('/');
+    const time = timeStr && timeStr !== 'null' ? timeStr : '00:00:00';
+    try {
+      return new Date(`${year}-${month}-${day}T${time}`).toISOString();
+    } catch (e) {
+      return null;
+    }
   };
 
   useEffect(() => {
     const fetchColaboradores = async () => {
-      const N8N_WEBHOOK_URL = 'https://apps-n8n.2jgevz.easypanel.host/webhook/get-users';
+      const N8N_WEBHOOK_URL = 'http://137.131.223.126:5678/webhook/get-users';
       try {
         const res = await fetch(N8N_WEBHOOK_URL);
-        const items = await res.json();
-        // Mapeamos para garantir que tenham um ID (necessário para o seu código de exclusão/renderização)
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : (data ? [data] : []);
+        
         const formattedUsers = items.map((item: any) => ({
           id: item.id || Math.random().toString(36).substr(2, 9),
-          name: item.name,
+          name: item.name || item.email,
           email: item.email,
           role: item.role || 'employee'
         }));
-        setUsers(formattedUsers);
+        if (formattedUsers.length > 0) setUsers(formattedUsers);
       } catch (err) {
         console.error("Erro ao buscar dados do n8n:", err);
       }
     };
   
     fetchColaboradores();
+  }, []);
+
+  useEffect(() => {
+    const fetchSolicitacoes = async () => {
+      const URL_SOLICITACOES = 'http://137.131.223.126:5678/webhook/buscaSolicitacoes';
+      
+      try {
+        console.log('🔄 Buscando solicitações...', URL_SOLICITACOES);
+        
+        const res = await fetch(URL_SOLICITACOES, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        console.log('📡 Status da resposta:', res.status);
+        
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        
+        const data = await res.json();
+        console.log('✅ Dados brutos recebidos:', data);
+        
+        const dataArray = Array.isArray(data) ? data : (data ? [data] : []);
+        console.log('📦 Array de dados:', dataArray);
+        
+        const mappedAbsences: Absence[] = dataArray.map((item: any, index: number) => {
+          console.log(`🔍 Processando item ${index}:`, item);
+          
+          const startDate = parseWebhookDateTime(item.dataIni, item.horaIni);
+          const endDate = parseWebhookDateTime(item.dataFim, item.horaFim);
+          
+          console.log('📅 Start Date:', startDate, '| End Date:', endDate);
+          
+          return {
+            id: item.id || `abs-${index}`,
+            userId: item.email || item.userId,
+            userName: item.nome || item.userName || item.email || 'Sem nome',
+            type: item.motivo || item.type || 'Ausência',
+            startDate: startDate || new Date().toISOString(),
+            endDate: endDate || startDate || new Date().toISOString(),
+            status: item.status || 'pendente',
+            reason: item.motivo || item.reason || '',
+            requestedAt: item.requestedAt || new Date().toISOString()
+          };
+        });
+        
+        console.log('✅ Ausências mapeadas:', mappedAbsences);
+        setAbsences(mappedAbsences);
+        
+      } catch (err) {
+        console.error("❌ Erro ao buscar solicitações:", err);
+        console.error("Detalhes:", err.message);
+      }
+    };
+  
+    fetchSolicitacoes();
   }, []);
   
   const handleRegister = (e: React.FormEvent) => {
@@ -140,9 +222,8 @@ const App: React.FC = () => {
     };
   
     setUsers([...users, newUser]);
-    n8nService.saveUser(newUser); // Mantendo a integração com n8n do original
+    n8nService.saveUser(newUser);
     
-    // Limpa e fecha o modal
     setNewMember({ name: '', email: '' });
     setIsModalOpen(false);
   };
@@ -214,7 +295,7 @@ const App: React.FC = () => {
 
         <div className="space-y-8">
           {activeTab === 'dashboard' && <DashboardView absences={absences} teamStatus={teamStatus} setActiveTab={setActiveTab} />}
-          {activeTab === 'status' && <StatusBoardView teamStatus={teamStatus} />}
+          {activeTab === 'status' && <StatusBoardView teamStatus={teamStatus} checkStatus={checkCollaboratorStatus} />}
           
           {activeTab === 'pending' && (
             <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
@@ -222,7 +303,7 @@ const App: React.FC = () => {
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
                     <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Colaborador</th>
-                    <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Tipo</th>
+                    <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Tipo / Motivo</th>
                     <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Período</th>
                     <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Decisão</th>
                   </tr>
@@ -231,19 +312,16 @@ const App: React.FC = () => {
                   {absences.filter(a => a.status === 'pending').map(abs => (
                     <tr key={abs.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-8 py-6">
-                        <div className="font-bold text-slate-800">{abs.userName}</div>
-                        <div className="text-xs text-slate-400">Desde: {new Date(abs.requestedAt).toLocaleDateString()}</div>
+                        <div className="font-bold text-slate-800 truncate max-w-[200px]" title={abs.userName}>{abs.userName}</div>
                       </td>
                       <td className="px-8 py-6">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          abs.type === 'Folga' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'
-                        }`}>
+                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-100 text-blue-700">
                           {abs.type}
                         </span>
                       </td>
                       <td className="px-8 py-6 text-sm text-slate-600 font-medium">
-                        {new Date(abs.startDate).toLocaleString()} — <br/>
-                        {new Date(abs.endDate).toLocaleString()}
+                        {new Date(abs.startDate).toLocaleString('pt-BR')} — <br/>
+                        {new Date(abs.endDate).toLocaleString('pt-BR')}
                       </td>
                       <td className="px-8 py-6 text-right">
                         <div className="flex justify-end gap-3">
@@ -346,7 +424,6 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Registration Modal */}
           {isModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -524,14 +601,14 @@ const DashboardView: React.FC<{
                 <div className="flex items-center gap-4">
                   <div className={`w-3 h-3 rounded-full ${member.isOnline ? 'bg-emerald-500 shadow-lg shadow-emerald-200' : 'bg-rose-500 shadow-lg shadow-rose-200'}`} />
                   <div>
-                    <p className="font-bold text-slate-800 leading-none">{member.name}</p>
+                    <p className="font-bold text-slate-800 leading-none truncate max-w-[120px]" title={member.name}>{member.name}</p>
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">{member.isOnline ? 'Online agora' : 'Indisponível'}</p>
                   </div>
                 </div>
                 {member.isOnline ? (
                    <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-3 py-1 rounded-xl">Ativo</span>
                 ) : (
-                   <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-xl">{member.currentAbsence?.type || 'Offline'}</span>
+                   <span className="text-[10px] font-black text-rose-600 uppercase tracking-widest bg-rose-50 px-3 py-1 rounded-xl truncate max-w-[80px]" title={member.currentAbsence?.type || 'Offline'}>{member.currentAbsence?.type || 'Offline'}</span>
                 )}
              </div>
           ))}
@@ -564,7 +641,6 @@ const StatCard: React.FC<{
         <p className={`text-4xl font-black mt-2 ${highlight ? 'text-white' : 'text-slate-900'}`}>{value}</p>
       </div>
       <div className={`p-4 rounded-3xl ${highlight ? 'bg-orange-500' : `bg-${color}-50`}`}>
-        {/* Fix: Using React.isValidElement and casting to React.ReactElement<any> to resolve TypeScript error on className property when using cloneElement */}
         {React.isValidElement(icon) && React.cloneElement(icon as React.ReactElement<any>, { 
           className: highlight ? 'text-white' : (icon as any).props?.className 
         })}
@@ -576,55 +652,109 @@ const StatCard: React.FC<{
   </div>
 );
 
-const StatusBoardView: React.FC<{ teamStatus: TeamMemberStatus[] }> = ({ teamStatus }) => (
-  <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden">
-    <table className="w-full text-left">
-      <thead className="bg-slate-50 border-b border-slate-200">
-        <tr>
-          <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest">Colaborador</th>
-          <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Disponibilidade</th>
-          <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest">Atividade / Ausência</th>
-          <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest">Retorno Estimado</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-100">
-        {teamStatus.map(member => (
-          <tr key={member.id} className="hover:bg-slate-50/50 transition-colors">
-            <td className="px-10 py-8">
-              <span className="font-extrabold text-slate-900 text-lg">{member.name}</span>
-              <p className="text-xs text-slate-400 font-medium">{member.email}</p>
-            </td>
-            <td className="px-10 py-8">
-              <div className="flex flex-col items-center">
-                <div className={`w-4 h-4 rounded-full mb-1 ${member.isOnline ? 'bg-emerald-500 shadow-lg shadow-emerald-200' : 'bg-rose-500 shadow-lg shadow-rose-200'}`} />
-                <span className={`text-[10px] font-black uppercase tracking-widest ${member.isOnline ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  {member.isOnline ? 'Disponível' : 'Ausente'}
-                </span>
+const StatusBoardView: React.FC<{ teamStatus: TeamMemberStatus[], checkStatus: (id: string) => any }> = ({ teamStatus, checkStatus }) => {
+  const [searchValue, setSearchValue] = useState('');
+  const [searchResult, setSearchResult] = useState<any>(null);
+
+  const handleSearch = () => {
+    const res = checkStatus(searchValue);
+    setSearchResult(res);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex items-center gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+          <input 
+            type="text" 
+            placeholder="Validar por nome ou e-mail..."
+            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none"
+            value={searchValue}
+            onChange={(e) => setSearchValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          />
+        </div>
+        <button 
+          onClick={handleSearch}
+          className="bg-[#1e1e1e] text-white px-6 py-3 rounded-xl font-bold hover:bg-black transition-all"
+        >
+          Validar Agora
+        </button>
+      </div>
+
+      {searchResult && (
+        <div className={`p-6 rounded-[2rem] border shadow-xl animate-in slide-in-from-top-4 duration-300 ${searchResult.success ? 'bg-white border-blue-100' : 'bg-rose-50 border-rose-100'}`}>
+           <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Resultado da Validação</p>
+                <h4 className="text-xl font-black text-slate-900">{searchResult.success ? searchResult.name : 'Não Localizado'}</h4>
+                <p className={`text-sm font-medium mt-2 ${searchResult.success ? 'text-slate-600' : 'text-rose-600'}`}>
+                  {searchResult.message}
+                </p>
               </div>
-            </td>
-            <td className="px-10 py-8">
-              {member.isOnline ? (
-                <span className="text-emerald-700 font-bold bg-emerald-50 px-4 py-2 rounded-2xl text-sm">Produzindo</span>
-              ) : (
-                <div className="flex flex-col">
-                  <span className="font-black text-slate-800 text-sm uppercase tracking-tight">{member.currentAbsence?.type}</span>
-                  <span className="text-xs text-slate-500 italic mt-1">"{member.currentAbsence?.reason}"</span>
+              {searchResult.success && (
+                <div className="text-right">
+                  <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-2xl font-black text-xs uppercase tracking-widest ${searchResult.isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                     <div className={`w-2 h-2 rounded-full ${searchResult.isOnline ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                     {searchResult.isOnline ? 'Disponível' : 'Ausente (Aprovado)'}
+                  </div>
                 </div>
               )}
-            </td>
-            <td className="px-10 py-8 text-sm font-bold text-slate-800">
-              {member.isOnline ? '-' : (
-                 <div className="flex items-center gap-2">
-                   <Clock size={14} className="text-slate-300" />
-                   {new Date(member.currentAbsence?.endDate || '').toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                 </div>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-);
+           </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest">Colaborador</th>
+              <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center">Disponibilidade</th>
+              <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest">Atividade / Ausência</th>
+              <th className="px-10 py-6 text-xs font-black text-slate-400 uppercase tracking-widest">Retorno Estimado</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {teamStatus.map(member => (
+              <tr key={member.id} className="hover:bg-slate-50/50 transition-colors">
+                <td className="px-10 py-8">
+                  <span className="font-extrabold text-slate-900 text-lg">{member.name}</span>
+                  <p className="text-xs text-slate-400 font-medium">{member.email}</p>
+                </td>
+                <td className="px-10 py-8">
+                  <div className="flex flex-col items-center">
+                    <div className={`w-4 h-4 rounded-full mb-1 ${member.isOnline ? 'bg-emerald-500 shadow-lg shadow-emerald-200' : 'bg-rose-500 shadow-lg shadow-rose-200'}`} />
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${member.isOnline ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {member.isOnline ? 'Disponível' : 'Ausente'}
+                    </span>
+                  </div>
+                </td>
+                <td className="px-10 py-8">
+                  {member.isOnline ? (
+                    <span className="text-emerald-700 font-bold bg-emerald-50 px-4 py-2 rounded-2xl text-sm">Produzindo</span>
+                  ) : (
+                    <div className="flex flex-col">
+                      <span className="font-black text-slate-800 text-sm uppercase tracking-tight">{member.currentAbsence?.type}</span>
+                      <span className="text-xs text-slate-500 italic mt-1">"{member.currentAbsence?.reason}"</span>
+                    </div>
+                  )}
+                </td>
+                <td className="px-10 py-8 text-sm font-bold text-slate-800">
+                  {member.isOnline ? '-' : (
+                    <div className="flex items-center gap-2">
+                      <Clock size={14} className="text-slate-300" />
+                      {new Date(member.currentAbsence?.endDate || '').toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 
 export default App;
