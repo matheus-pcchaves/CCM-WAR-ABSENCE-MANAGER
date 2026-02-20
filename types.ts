@@ -1,27 +1,29 @@
-
 export type AbsenceStatus = 'pending' | 'approved' | 'rejected';
-export type AbsenceType = 'Folga' | 'Ausência Parcial' | 'Férias' | 'Licença';
 
 export interface User {
   id: string;
   name: string;
   email: string;
   role: 'admin' | 'employee';
+  intervalo?: string; // Adding the new field
+  local?: string; // Adding the new field
 }
 
 export interface Absence {
   id: string;
   userId: string;
   userName: string;
-  type: AbsenceType;
-  startDate: string; // ISO String
-  endDate: string;   // ISO String
+  type: string;
+  startDate: string;
+  endDate: string;
   status: AbsenceStatus;
-  reason?: string;
+  reason: string;
   requestedAt: string;
 }
 
 export interface TeamMemberStatus extends User {
   isOnline: boolean;
-  currentAbsence?: Absence;
+  currentAbsence: Absence | null;
 }
+
+export type Tab = 'dashboard' | 'status' | 'pending' | 'history' | 'calendar' | 'monthly_report' | 'users';
