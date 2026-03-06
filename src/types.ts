@@ -1,9 +1,12 @@
+export type AbsenceStatus = 'pending' | 'approved' | 'rejected';
 
 export interface User {
   id: string;
   name: string;
   email: string;
   role: 'admin' | 'employee';
+  intervalo?: string;
+  local?: string;
 }
 
 export interface Absence {
@@ -11,16 +14,16 @@ export interface Absence {
   userId: string;
   userName: string;
   type: string;
-  startDate: string; // ISO string
-  endDate: string;   // ISO string
-  status: 'pending' | 'aproved' | 'rejected';
+  startDate: string;
+  endDate: string;
+  status: AbsenceStatus;
   reason: string;
   requestedAt: string;
 }
 
 export interface TeamMemberStatus extends User {
   isOnline: boolean;
-  currentAbsence?: Absence;
+  currentAbsence: Absence | null;
 }
 
-export type Tab = 'dashboard' | 'status' | 'pending' | 'history' | 'monthly_report' | 'users';
+export type Tab = 'dashboard' | 'status' | 'pending' | 'history' | 'calendar' | 'monthly_report' | 'users';

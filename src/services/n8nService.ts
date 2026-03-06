@@ -1,6 +1,6 @@
 import { User, Absence, AbsenceStatus } from '../types';
 
-const BASE_URL = 'http://137.131.223.126:5678/webhook';
+const BASE_URL = '/api/n8n';
 
 export const n8nService = {
   async fetchUsers(): Promise<User[]> {
@@ -9,7 +9,6 @@ export const n8nService = {
       if (!res.ok) return [];
       const data = await res.json();
       const items = Array.isArray(data) ? data : (data ? [data] : []);
-      console.log(items)
       return items.map((item: any) => ({
         id: item.id || item.email || Math.random().toString(36).substr(2, 9),
         name: item.name || item.email || 'Usuário',
@@ -33,7 +32,6 @@ export const n8nService = {
       const dataArray = Array.isArray(data) ? data : (data ? [data] : []);
       
       return dataArray.map((item: any, index: number) => {
-        // Handle n8n specific date formats like DD/MM/YYYY
         const parseDate = (d: string, t: string) => {
           if (!d || d === 'null' || d === '') return null;
           const parts = d.split('/');
@@ -48,7 +46,6 @@ export const n8nService = {
         const start = parseDate(item.dataIni, item.horaIni);
         const end = parseDate(item.dataFim, item.horaFim);
 
-        // Normalize status to handle potential typos like 'aproved'
         let status: AbsenceStatus = 'pending';
         const rawStatus = item.status?.toLowerCase();
         if (rawStatus === 'approved' || rawStatus === 'aproved' || rawStatus === 'aprovado') {

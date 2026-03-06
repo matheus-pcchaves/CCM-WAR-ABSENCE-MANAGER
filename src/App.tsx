@@ -1,5 +1,5 @@
-
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Users, 
   Calendar, 
@@ -15,7 +15,7 @@ import {
   Download,
   FileSpreadsheet,
   Search,
-  AlertCircle
+  Menu
 } from 'lucide-react';
 import { User, Absence, TeamMemberStatus, Tab } from './types';
 import { n8nService } from './services/n8nService';
@@ -26,14 +26,43 @@ const INITIAL_USERS: User[] = [
   { id: '3', name: 'Brenda Costa', email: 'bcosta@ccmtecnologia.com.br', role: 'employee' },
 ];
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [absences, setAbsences] = useState<Absence[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [newMember, setNewMember] = useState({ name: '', email: '' });
   const [loading, setLoading] = useState(true);
+
+  // Sync activeTab with URL
+  useEffect(() => {
+    const path = location.pathname.substring(1);
+    let tab: Tab = 'dashboard';
+    if (path === 'status') tab = 'status';
+    else if (path === 'pending') tab = 'pending';
+    else if (path === 'history') tab = 'history';
+    else if (path === 'calendar') tab = 'calendar';
+    else if (path === 'reports') tab = 'monthly_report';
+    else if (path === 'users') tab = 'users';
+    
+    if (tab !== activeTab) {
+      setActiveTab(tab);
+    }
+  }, [location.pathname]);
+
+  const handleTabChange = (tab: Tab) => {
+    setActiveTab(tab);
+    if (window.innerWidth < 1024) {
+      setIsSidebarOpen(false);
+    }
+    if (tab === 'dashboard') navigate('/');
+    else if (tab === 'monthly_report') navigate('/reports');
+    else navigate(`/${tab}`);
+  };
 
   // Update clock every second for precision
   useEffect(() => {
@@ -45,36 +74,58 @@ const App: React.FC = () => {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      const [fetchedUsers, fetchedAbsences] = await Promise.all([
-        n8nService.fetchUsers(),
-        n8nService.fetchAbsences()
-      ]);
-      
-      if (fetchedUsers.length > 0) setUsers(fetchedUsers);
-      setAbsences(fetchedAbsences);
-      setLoading(false);
+      try {
+        const [fetchedUsers, fetchedAbsences] = await Promise.all([
+          n8nService.fetchUsers(),
+          n8nService.fetchAbsences()
+        ]);
+        
+        if (fetchedUsers.length > 0) setUsers(fetchedUsers);
+        setAbsences(fetchedAbsences);
+      } catch (error) {
+        console.error("Error loading initial data:", error);
+      } finally {
+        setLoading(false);
+      }
     };
     loadData();
   }, []);
 
-  // CRITICAL LOGIC: Calculate real-time online status
+  // CRITICAL LOGIC: Calculate real-time online status including 1h12m lunch break
   const teamStatus: TeamMemberStatus[] = useMemo(() => {
     const now = currentTime.getTime();
     
     return users.map(user => {
+      // 1. Check for official absences (vacation, medical, etc.)
       const activeAbsence = absences.find(abs => {
         const isSameUser = (abs.userId === user.id || abs.userId === user.email);
         const isApproved = abs.status === 'approved';
         const start = new Date(abs.startDate).getTime();
         const end = new Date(abs.endDate).getTime();
-        
         return isSameUser && isApproved && now >= start && now <= end;
       });
 
+      // 2. Logic for 1:12h interval (72 minutes)
+      let isOnInterval = false;
+      if (user.intervalo) {
+        const [hours, minutes] = user.intervalo.split(':').map(Number);
+        const intervalStart = new Date(currentTime);
+        intervalStart.setHours(hours, minutes, 0, 0);
+        const intervalEnd = new Date(intervalStart.getTime() + 72 * 60000);
+
+        if (now >= intervalStart.getTime() && now <= intervalEnd.getTime()) {
+          isOnInterval = true;
+        }
+      }
+
+      const isOffline = !!activeAbsence || isOnInterval;
+
       return {
         ...user,
-        isOnline: !activeAbsence,
-        currentAbsence: activeAbsence
+        isOnline: !isOffline,
+        currentAbsence: isOnInterval 
+          ? { type: 'Intervalo (1:12h)', startDate: '', endDate: '', status: 'approved', userId: user.id, userName: user.name, requestedAt: '' } as Absence
+          : activeAbsence || null
       };
     });
   }, [users, absences, currentTime]);
@@ -109,13 +160,21 @@ const App: React.FC = () => {
   }, [teamStatus]);
 
   const handleApprove = (id: string) => {
-    setAbsences(prev => prev.map(a => a.id === id ? { ...a, status: 'approved' } : a));
-    n8nService.updateAbsenceStatus(id, 'approved');
+    const absence = absences.find(a => a.id === id);
+    if (!absence) return;
+    
+    const updatedAbsence: Absence = { ...absence, status: 'approved' };
+    setAbsences(prev => prev.map(a => a.id === id ? updatedAbsence : a));
+    n8nService.updateAbsenceStatus(updatedAbsence);
   };
 
   const handleReject = (id: string) => {
-    setAbsences(prev => prev.map(a => a.id === id ? { ...a, status: 'rejected' } : a));
-    n8nService.updateAbsenceStatus(id, 'rejected');
+    const absence = absences.find(a => a.id === id);
+    if (!absence) return;
+
+    const updatedAbsence: Absence = { ...absence, status: 'rejected' };
+    setAbsences(prev => prev.map(a => a.id === id ? updatedAbsence : a));
+    n8nService.updateAbsenceStatus(updatedAbsence);
   };
 
   const deleteUser = (id: string) => {
@@ -159,8 +218,20 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row bg-[#f8fafc]">
+      {/* Sidebar Overlay for mobile */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 lg:hidden" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-full lg:w-64 bg-[#111827] text-white flex flex-col sticky top-0 h-screen overflow-y-auto z-40">
+      <aside className={`fixed lg:sticky top-0 left-0 h-screen bg-[#111827] text-white flex flex-col overflow-y-auto z-50 lg:z-40 transition-all duration-300 ${
+        isSidebarOpen 
+          ? 'w-64 translate-x-0' 
+          : 'w-0 lg:w-0 -translate-x-full lg:translate-x-0 lg:hidden'
+      }`}>
         <div className="p-6 flex flex-col items-center">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-white text-3xl font-black tracking-tighter">CCM</span>
@@ -168,19 +239,20 @@ const App: React.FC = () => {
                <Activity size={20} className="text-white" />
             </div>
           </div>
-          <p className="text-[9px] text-slate-400 font-bold tracking-[0.2em] uppercase">Squad Management</p>
+          <p className="text-[9px] text-slate-400 font-bold tracking-[0.2em] uppercase">Squad Warriors</p>
         </div>
 
         <nav className="flex-1 px-3 space-y-1 py-2">
-          <SidebarLink active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={18}/>} label="Visão Geral" />
-          <SidebarLink active={activeTab === 'status'} onClick={() => setActiveTab('status')} icon={<Activity size={18}/>} label="Tempo Real" />
-          <SidebarLink active={activeTab === 'pending'} onClick={() => setActiveTab('pending')} icon={<Clock size={18}/>} label="Solicitações" badge={absences.filter(a => a.status === 'pending').length} />
-          <SidebarLink active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={<CheckCircle size={18}/>} label="Histórico" />
-          <SidebarLink active={activeTab === 'monthly_report'} onClick={() => setActiveTab('monthly_report')} icon={<FileSpreadsheet size={18}/>} label="Relatórios" />
+          <SidebarLink active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18}/>} label="Visão Geral" />
+          <SidebarLink active={activeTab === 'status'} onClick={() => handleTabChange('status')} icon={<Activity size={18}/>} label="Tempo Real" />
+          <SidebarLink active={activeTab === 'pending'} onClick={() => handleTabChange('pending')} icon={<Clock size={18}/>} label="Solicitações" badge={absences.filter(a => a.status === 'pending').length} />
+          <SidebarLink active={activeTab === 'history'} onClick={() => handleTabChange('history')} icon={<CheckCircle size={18}/>} label="Histórico" />
+          <SidebarLink active={activeTab === 'calendar'} onClick={() => handleTabChange('calendar')} icon={<Calendar size={18}/>} label="Calendário" />
+          <SidebarLink active={activeTab === 'monthly_report'} onClick={() => handleTabChange('monthly_report')} icon={<FileSpreadsheet size={18}/>} label="Relatórios" />
           <div className="pt-2 pb-1">
              <div className="h-px bg-slate-800 mx-3" />
           </div>
-          <SidebarLink active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users size={18}/>} label="Equipe" />
+          <SidebarLink active={activeTab === 'users'} onClick={() => handleTabChange('users')} icon={<Users size={18}/>} label="Equipe" />
         </nav>
 
         <div className="p-4 m-3 rounded-xl bg-slate-800/50 border border-slate-700/50 text-center">
@@ -193,20 +265,29 @@ const App: React.FC = () => {
       {/* Content Area */}
       <main className="flex-1 min-w-0 p-3 md:p-6 relative">
         <header className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
-          <div>
-            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 shadow-sm"
+            >
+              <Menu size={20} />
+            </button>
+            <div>
+              <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
               {activeTab === 'dashboard' && 'Painel de Controle'}
-              {activeTab === 'status' && 'Status do Squad'}
+              {activeTab === 'status' && 'Status da Squad'}
               {activeTab === 'pending' && 'Pendências'}
               {activeTab === 'history' && 'Histórico'}
+              {activeTab === 'calendar' && 'Consulta por Data'}
               {activeTab === 'monthly_report' && 'Exportação'}
               {activeTab === 'users' && 'Time'}
             </h2>
             <p className="text-xs text-slate-500 font-medium flex items-center gap-2">
-              Sync via n8n 
+              Gerenciamento em tempo real
               <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
             </p>
           </div>
+        </div>
           <div className="flex items-center gap-3">
              <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm hidden md:flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-[10px]">AG</div>
@@ -228,145 +309,144 @@ const App: React.FC = () => {
         )}
 
         <div className="space-y-4 max-w-7xl mx-auto">
-          {activeTab === 'dashboard' && (
-            <div className="space-y-4">
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                 <StatCard 
+          <Routes>
+            <Route path="/" element={
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <StatCard 
                     title="Squad Online" 
                     value={teamStatus.filter(s => s.isOnline).length.toString()} 
-                    icon={<Activity />} 
+                    icon={<Activity size={20} />} 
                     color="emerald" 
                     subValue={`Ativos`}
-                    onClick={() => setActiveTab('status')}
+                    onClick={() => handleTabChange('status')}
                   />
                   <StatCard 
                     title="Pendentes" 
                     value={absences.filter(a => a.status === 'pending').length.toString()} 
-                    icon={<Clock />} 
+                    icon={<Clock size={20} />} 
                     color="orange" 
                     subValue="Aguardando"
-                    onClick={() => setActiveTab('pending')}
+                    onClick={() => handleTabChange('pending')}
                     highlight={absences.filter(a => a.status === 'pending').length > 0}
                   />
                   <StatCard 
                     title="Aprovados" 
                     value={absences.filter(a => a.status === 'approved').length.toString()} 
-                    icon={<CheckCircle />} 
+                    icon={<CheckCircle size={20} />} 
                     color="blue" 
                     subValue="Este mês"
-                    onClick={() => setActiveTab('history')}
+                    onClick={() => handleTabChange('history')}
                   />
                   <StatCard 
                     title="Equipe" 
                     value={users.length.toString()} 
-                    icon={<Users />} 
+                    icon={<Users size={20} />} 
                     color="indigo" 
                     subValue="Integrantes"
-                    onClick={() => setActiveTab('users')}
+                    onClick={() => handleTabChange('users')}
                   />
-               </div>
+                </div>
 
-               <div className="bg-white p-5 md:p-6 rounded-[1.5rem] border border-slate-200 shadow-sm">
+                <div className="bg-white p-5 md:p-6 rounded-[1.5rem] border border-slate-200 shadow-sm">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
                       <div className="w-1 h-5 bg-blue-600 rounded-full"/>
                       Resumo Squad
                     </h3>
-                    <button onClick={() => setActiveTab('status')} className="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-all uppercase tracking-widest">Ver Tudo</button>
+                    <button onClick={() => handleTabChange('status')} className="text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-all uppercase tracking-widest">Ver Tudo</button>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                     {teamStatus.map(member => (
-                       <div key={member.id} className="flex items-center justify-between p-3 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-white hover:shadow-lg hover:shadow-slate-200/40 transition-all duration-300 group">
-                          <div className="flex items-center gap-3">
-                            <div className="relative">
-                               <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${member.isOnline ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
-                                 {member.name.charAt(0)}
-                               </div>
-                               <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${member.isOnline ? 'bg-emerald-500' : 'bg-rose-500'}`}>
-                                  {member.isOnline && <div className="w-full h-full rounded-full bg-emerald-400 animate-ping opacity-75" />}
-                               </div>
+                      <div key={member.id} className="flex items-center justify-between p-3 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-white hover:shadow-lg hover:shadow-slate-200/40 transition-all duration-300 group">
+                        <div className="flex items-center gap-3">
+                          <div className="relative">
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${member.isOnline ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                              {member.name.charAt(0)}
                             </div>
-                            <div className="min-w-0">
-                              <p className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors truncate max-w-[120px] leading-tight text-sm" title={member.name}>{member.name}</p>
-                              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 truncate">{member.isOnline ? 'Ativo' : (member.currentAbsence?.type || 'Offline')}</p>
+                            <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${member.isOnline ? 'bg-emerald-500' : 'bg-rose-500'}`}>
+                                {member.isOnline && <div className="w-full h-full rounded-full bg-emerald-400 animate-ping opacity-75" />}
                             </div>
                           </div>
-                          <div className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${member.isOnline ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>
-                            {member.isOnline ? 'On' : 'Off'}
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors truncate max-w-[120px] leading-tight text-sm" title={member.name}>{member.name}</p>
+                            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5 truncate">{member.isOnline ? 'Ativo' : (member.currentAbsence?.type || 'Offline')}</p>
                           </div>
-                       </div>
+                        </div>
+                        <div className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${member.isOnline ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>
+                          {member.isOnline ? 'On' : 'Off'}
+                        </div>
+                      </div>
                     ))}
                   </div>
-               </div>
-            </div>
-          )}
-
-          {activeTab === 'status' && <StatusBoardView teamStatus={teamStatus} checkStatus={checkCollaboratorStatus} />}
-
-          {activeTab === 'pending' && (
-            <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
-               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50/80">
-                    <tr>
-                      <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Colaborador</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Motivo</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Período</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right border-b border-slate-100">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {absences.filter(a => a.status === 'pending').map(abs => (
-                      <tr key={abs.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-3">
-                          <div className="font-bold text-slate-900 text-base leading-tight">{abs.userName}</div>
-                          <div className="text-[10px] text-slate-400 font-medium">{new Date(abs.requestedAt).toLocaleDateString()}</div>
-                        </td>
-                        <td className="px-6 py-3">
-                          <span className="px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm">
-                            {abs.type}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3">
-                           <div className="flex flex-col text-[11px]">
-                              <div className="font-bold text-slate-700">
-                                 {new Date(abs.startDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                              </div>
-                              <div className="font-bold text-slate-400">
-                                 {new Date(abs.endDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                              </div>
-                           </div>
-                        </td>
-                        <td className="px-6 py-3 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button onClick={() => handleApprove(abs.id)} className="p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-xl transition-all border border-emerald-100" title="Aprovar">
-                              <Check size={16} />
-                            </button>
-                            <button onClick={() => handleReject(abs.id)} className="p-2 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white rounded-xl transition-all border border-rose-100" title="Reprovar">
-                              <X size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {absences.filter(a => a.status === 'pending').length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="px-6 py-12 text-center">
-                           <div className="flex flex-col items-center opacity-40">
-                              <CheckCircle size={32} className="text-emerald-400 mb-2" />
-                              <p className="text-sm font-bold text-slate-400">Sem pendências</p>
-                           </div>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                </div>
               </div>
-            </div>
-          )}
-
-          {activeTab === 'history' && (
-             <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
+            } />
+            <Route path="/status" element={<StatusBoardView teamStatus={teamStatus} checkStatus={checkCollaboratorStatus} />} />
+            <Route path="/calendar" element={<CalendarView absences={absences} />} />
+            <Route path="/pending" element={
+              <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50/80">
+                      <tr>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Colaborador</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Motivo</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Período</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right border-b border-slate-100">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {absences.filter(a => a.status === 'pending').map(abs => (
+                        <tr key={abs.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-6 py-3">
+                            <div className="font-bold text-slate-900 text-base leading-tight">{abs.userName}</div>
+                            <div className="text-[10px] text-slate-400 font-medium">{new Date(abs.requestedAt).toLocaleDateString()}</div>
+                          </td>
+                          <td className="px-6 py-3">
+                            <span className="px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100 shadow-sm">
+                              {abs.type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3">
+                            <div className="flex flex-col text-[11px]">
+                                <div className="font-bold text-slate-700">
+                                  {new Date(abs.startDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                                <div className="font-bold text-slate-400">
+                                  {new Date(abs.endDate).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-3 text-right">
+                            <div className="flex justify-end gap-2">
+                              <button onClick={() => handleApprove(abs.id)} className="p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-xl transition-all border border-emerald-100" title="Aprovar">
+                                <Check size={16} />
+                              </button>
+                              <button onClick={() => handleReject(abs.id)} className="p-2 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white rounded-xl transition-all border border-rose-100" title="Reprovar">
+                                <X size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {absences.filter(a => a.status === 'pending').length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-12 text-center">
+                            <div className="flex flex-col items-center opacity-40">
+                                <CheckCircle size={32} className="text-emerald-400 mb-2" />
+                                <p className="text-sm font-bold text-slate-400">Sem pendências</p>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            } />
+            <Route path="/history" element={
+              <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead className="bg-slate-50/80">
@@ -378,7 +458,7 @@ const App: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {absences.filter(a => a.status !== 'pending').map(abs => (
+                      {absences.filter(a => a.status === 'approved' || a.status === 'rejected').map(abs => (
                         <tr key={abs.id} className="hover:bg-slate-50/30">
                           <td className="px-6 py-3 font-bold text-slate-900 text-sm">{abs.userName}</td>
                           <td className="px-6 py-3">
@@ -392,75 +472,81 @@ const App: React.FC = () => {
                               abs.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-rose-50 text-rose-700 border-rose-100'
                             }`}>
                               <div className={`w-1.5 h-1.5 rounded-full ${abs.status === 'approved' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                              {abs.status === 'approved' ? 'OK' : 'X'}
+                              {abs.status === 'approved' ? 'Aprovado' : 'Rejeitado'}
                             </span>
+                          </td>
+                        </tr>
+                      ))}
+                      {absences.filter(a => a.status === 'approved' || a.status === 'rejected').length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-12 text-center text-slate-400 font-bold text-sm">
+                            Nenhum registro no histórico.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            } />
+            <Route path="/reports" element={
+              <div className="space-y-4">
+                <div className="bg-white p-5 rounded-[1.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600">
+                      <Download size={24} />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-black text-slate-900">Relatório Mensal</h4>
+                      <p className="text-xs text-slate-500 font-medium">Extrair atividades consolidadas.</p>
+                    </div>
+                  </div>
+                  <button onClick={downloadXLSX} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-emerald-200 active:scale-95 text-sm">
+                    <Download size={18} /> Baixar CSV
+                  </button>
+                </div>
+              </div>
+            } />
+            <Route path="/users" element={
+              <div className="space-y-4">
+                <div className="flex justify-end">
+                  <button onClick={() => setIsModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-black transition-all shadow-xl shadow-blue-200 text-sm">
+                    <Plus size={20} /> Novo Integrante
+                  </button>
+                </div>
+                
+                <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50/80">
+                      <tr>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Membro</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">E-mail</th>
+                        <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right border-b border-slate-100">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {users.map(user => (
+                        <tr key={user.id} className="hover:bg-slate-50/30 transition-colors">
+                          <td className="px-6 py-3">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 border border-slate-200 text-xs">{user.name.charAt(0)}</div>
+                                <span className="font-bold text-slate-900 text-sm">{user.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-3 text-slate-500 font-medium text-xs">{user.email}</td>
+                          <td className="px-6 py-3 text-right">
+                            <button onClick={() => deleteUser(user.id)} className="p-2 text-slate-300 hover:text-rose-600 rounded-lg transition-all">
+                              <Trash2 size={16} />
+                            </button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-             </div>
-          )}
-
-          {activeTab === 'monthly_report' && (
-            <div className="space-y-4">
-               <div className="bg-white p-5 rounded-[1.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600">
-                       <Download size={24} />
-                    </div>
-                    <div>
-                       <h4 className="text-base font-black text-slate-900">Relatório Mensal</h4>
-                       <p className="text-xs text-slate-500 font-medium">Extrair atividades consolidadas.</p>
-                    </div>
-                  </div>
-                  <button onClick={downloadXLSX} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-2xl flex items-center justify-center gap-2 font-black transition-all shadow-lg shadow-emerald-200 active:scale-95 text-sm">
-                    <Download size={18} /> Baixar CSV
-                  </button>
-               </div>
-            </div>
-          )}
-
-          {activeTab === 'users' && (
-            <div className="space-y-4">
-              <div className="flex justify-end">
-                <button onClick={() => setIsModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-black transition-all shadow-xl shadow-blue-200 text-sm">
-                  <Plus size={20} /> Novo Integrante
-                </button>
               </div>
-              
-              <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50/80">
-                    <tr>
-                      <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Membro</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">E-mail</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 text-right">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {users.map(user => (
-                      <tr key={user.id} className="hover:bg-slate-50/30 transition-colors">
-                        <td className="px-6 py-3">
-                           <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-500 border border-slate-200 text-xs">{user.name.charAt(0)}</div>
-                              <span className="font-bold text-slate-900 text-sm">{user.name}</span>
-                           </div>
-                        </td>
-                        <td className="px-6 py-3 text-slate-500 font-medium text-xs">{user.email}</td>
-                        <td className="px-6 py-3 text-right">
-                          <button onClick={() => deleteUser(user.id)} className="p-2 text-slate-300 hover:text-rose-600 rounded-lg transition-all">
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+            } />
+          </Routes>
         </div>
       </main>
 
@@ -509,7 +595,114 @@ const App: React.FC = () => {
   );
 };
 
-// --- Helper Components ---
+const App: React.FC = () => (
+  <BrowserRouter>
+    <AppContent />
+  </BrowserRouter>
+);
+
+const CalendarView: React.FC<{ absences: Absence[] }> = ({ absences }) => {
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const filteredAbsences = useMemo(() => {
+    if (!selectedDate) return [];
+    
+    return absences.filter(abs => {
+      const start = new Date(abs.startDate);
+      const end = new Date(abs.endDate);
+      const target = new Date(selectedDate + 'T00:00:00');
+      
+      const targetTime = target.getTime();
+      
+      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+      
+      return targetTime >= startDay && targetTime <= endDay && abs.status === 'approved';
+    });
+  }, [absences, selectedDate]);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white p-5 rounded-[1.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-4">
+        <div className="flex items-center gap-3 flex-1 w-full">
+          <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+            <Calendar size={20} />
+          </div>
+          <div className="flex-1">
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Selecionar Data para Consulta</label>
+            <input 
+              type="date" 
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="w-full bg-transparent border-none outline-none text-slate-900 font-black text-lg p-0 cursor-pointer"
+            />
+          </div>
+        </div>
+        <div className="w-px h-10 bg-slate-100 hidden md:block" />
+        <div className="text-right hidden md:block">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Resultados</p>
+          <p className="text-lg font-black text-slate-900">{filteredAbsences.length} ausências</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50/80">
+              <tr>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Colaborador</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Motivo</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Horário</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredAbsences.map(abs => (
+                <tr key={abs.id} className="hover:bg-slate-50/30 transition-colors">
+                  <td className="px-6 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-500 border border-slate-200 text-xs">
+                        {abs.userName.charAt(0)}
+                      </div>
+                      <span className="font-bold text-slate-900 text-sm">{abs.userName}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-3">
+                    <span className="text-[10px] text-slate-600 font-medium px-2 py-0.5 bg-slate-100 rounded-lg">{abs.type}</span>
+                  </td>
+                  <td className="px-6 py-3">
+                    <div className="text-[11px] font-bold text-slate-700">
+                      {new Date(abs.startDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} — {new Date(abs.endDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                    <div className="text-[9px] text-slate-400 font-medium">
+                      {new Date(abs.startDate).toLocaleDateString('pt-BR')}
+                    </div>
+                  </td>
+                  <td className="px-6 py-3">
+                    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-emerald-50 text-emerald-700 border-emerald-100">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      Aprovado
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {filteredAbsences.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-6 py-12 text-center">
+                    <div className="flex flex-col items-center opacity-40">
+                      <Calendar size={32} className="text-slate-400 mb-2" />
+                      <p className="text-sm font-bold text-slate-400">Nenhuma ausência aprovada para este dia</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const SidebarLink: React.FC<{ 
   active: boolean; 
@@ -616,6 +809,8 @@ const StatusBoardView: React.FC<{
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Membro</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center border-b border-slate-100">Status</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Motivo</th>
+                <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Intervalo</th>
+                <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Local</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Retorno</th>
               </tr>
             </thead>
@@ -647,6 +842,20 @@ const StatusBoardView: React.FC<{
                     ) : (
                       <span className="font-black text-slate-800 text-[11px] uppercase truncate max-w-[100px] block">{member.currentAbsence?.type}</span>
                     )}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-black text-slate-800 font-mono">
+                    {member.intervalo ? (
+                      <span className="text-blue-600 bg-blue-50 border border-blue-100 px-2 py-1 rounded-lg">
+                        {member.intervalo}
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-black text-slate-800 font-mono">
+                    {member.local ? (
+                      <span className="text-blue-600 bg-blue-50 border border-blue-100 px-2 py-1 rounded-lg">
+                        {member.local}
+                      </span>
+                    ) : '—'}
                   </td>
                   <td className="px-6 py-4 text-sm font-black text-slate-800 font-mono">
                     {!member.isOnline && member.currentAbsence?.endDate ? (

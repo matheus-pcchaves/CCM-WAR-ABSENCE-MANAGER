@@ -1,5 +1,5 @@
-
 {
-  "name": "CCM Absence Manager",
-  "description": "A modern dashboard for managers to approve absences, manage users, and track real-time team availability based on Brasília time, integrated with n8n webhooks."
+  "name": "CCM Squad Warriors Manager",
+  "description": "Real-time team status and absence management dashboard for CCM Tecnologia.",
+  "requestFramePermissions": []
 }
