@@ -1,5 +1,10 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { 
   Users, 
   Calendar, 
@@ -15,7 +20,9 @@ import {
   Download,
   FileSpreadsheet,
   Search,
-  Menu
+  Menu,
+  Lock,
+  LogIn
 } from 'lucide-react';
 import { User, Absence, TeamMemberStatus, Tab } from './types';
 import { n8nService } from './services/n8nService';
@@ -26,9 +33,79 @@ const INITIAL_USERS: User[] = [
   { id: '3', name: 'Brenda Costa', email: 'bcosta@ccmtecnologia.com.br', role: 'employee' },
 ];
 
+const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (username === 'admin' && password === 'P@$$ccmWar') {
+      onLogin();
+    } else {
+      setError('Usuário ou senha inválidos');
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] p-4">
+      <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-200 w-full max-w-md animate-in fade-in zoom-in duration-300">
+        <div className="flex flex-col items-center mb-8">
+          <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-500/20 mb-4">
+            <Lock size={32} className="text-white" />
+          </div>
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Área administrativa</h2>
+          <p className="text-sm text-slate-500 font-medium">Acesse para gerenciar sua squad</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Usuário</label>
+            <input 
+              type="text" 
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 outline-none text-sm font-medium transition-all"
+              placeholder="admin"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Senha</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 outline-none text-sm font-medium transition-all"
+              placeholder="••••••••"
+              required
+            />
+          </div>
+          {error && <p className="text-xs text-rose-600 font-bold text-center">{error}</p>}
+          <button type="submit" className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]">
+            Entrar no Painel
+          </button>
+        </form>
+        
+        <div className="mt-6 text-center">
+          <button 
+            onClick={() => window.location.href = '/status'}
+            className="text-[10px] font-bold text-slate-400 hover:text-blue-600 uppercase tracking-widest transition-colors"
+          >
+            Voltar para Status Público
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return localStorage.getItem('ccm_auth') === 'true';
+  });
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [absences, setAbsences] = useState<Absence[]>([]);
@@ -37,6 +114,18 @@ const AppContent: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [newMember, setNewMember] = useState({ name: '', email: '' });
   const [loading, setLoading] = useState(true);
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+    localStorage.setItem('ccm_auth', 'true');
+    navigate('/');
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem('ccm_auth');
+    navigate('/status');
+  };
 
   // Sync activeTab with URL
   useEffect(() => {
@@ -216,6 +305,10 @@ const AppContent: React.FC = () => {
   const brTimeStr = currentTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const brDateStr = currentTime.toLocaleDateString('pt-BR');
 
+  if (location.pathname === '/login' && !isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
+
   return (
     <div className="min-h-screen flex flex-col lg:flex-row bg-[#f8fafc]">
       {/* Sidebar Overlay for mobile */}
@@ -243,16 +336,25 @@ const AppContent: React.FC = () => {
         </div>
 
         <nav className="flex-1 px-3 space-y-1 py-2">
-          <SidebarLink active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18}/>} label="Visão Geral" />
-          <SidebarLink active={activeTab === 'status'} onClick={() => handleTabChange('status')} icon={<Activity size={18}/>} label="Tempo Real" />
-          <SidebarLink active={activeTab === 'pending'} onClick={() => handleTabChange('pending')} icon={<Clock size={18}/>} label="Solicitações" badge={absences.filter(a => a.status === 'pending').length} />
-          <SidebarLink active={activeTab === 'history'} onClick={() => handleTabChange('history')} icon={<CheckCircle size={18}/>} label="Histórico" />
-          <SidebarLink active={activeTab === 'calendar'} onClick={() => handleTabChange('calendar')} icon={<Calendar size={18}/>} label="Calendário" />
-          <SidebarLink active={activeTab === 'monthly_report'} onClick={() => handleTabChange('monthly_report')} icon={<FileSpreadsheet size={18}/>} label="Relatórios" />
-          <div className="pt-2 pb-1">
-             <div className="h-px bg-slate-800 mx-3" />
-          </div>
-          <SidebarLink active={activeTab === 'users'} onClick={() => handleTabChange('users')} icon={<Users size={18}/>} label="Equipe" />
+          {isAuthenticated ? (
+            <>
+              <SidebarLink active={activeTab === 'dashboard'} onClick={() => handleTabChange('dashboard')} icon={<LayoutDashboard size={18}/>} label="Visão Geral" />
+              <SidebarLink active={activeTab === 'status'} onClick={() => handleTabChange('status')} icon={<Activity size={18}/>} label="Tempo Real" />
+              <SidebarLink active={activeTab === 'pending'} onClick={() => handleTabChange('pending')} icon={<Clock size={18}/>} label="Solicitações" badge={absences.filter(a => a.status === 'pending').length} />
+              <SidebarLink active={activeTab === 'history'} onClick={() => handleTabChange('history')} icon={<CheckCircle size={18}/>} label="Histórico" />
+              <SidebarLink active={activeTab === 'calendar'} onClick={() => handleTabChange('calendar')} icon={<Calendar size={18}/>} label="Calendário" />
+              <SidebarLink active={activeTab === 'monthly_report'} onClick={() => handleTabChange('monthly_report')} icon={<FileSpreadsheet size={18}/>} label="Relatórios" />
+              <div className="pt-2 pb-1">
+                 <div className="h-px bg-slate-800 mx-3" />
+              </div>
+              <SidebarLink active={activeTab === 'users'} onClick={() => handleTabChange('users')} icon={<Users size={18}/>} label="Equipe" />
+            </>
+          ) : (
+            <>
+              <SidebarLink active={activeTab === 'status'} onClick={() => handleTabChange('status')} icon={<Activity size={18}/>} label="Tempo Real" />
+              <SidebarLink active={false} onClick={() => navigate('/login')} icon={<LogIn size={18}/>} label="Login" />
+            </>
+          )}
         </nav>
 
         <div className="p-4 m-3 rounded-xl bg-slate-800/50 border border-slate-700/50 text-center">
@@ -289,15 +391,30 @@ const AppContent: React.FC = () => {
           </div>
         </div>
           <div className="flex items-center gap-3">
-             <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm hidden md:flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-[10px]">AG</div>
-                <div className="text-right">
-                   <p className="text-[11px] font-bold text-slate-800 leading-none">Admin Gestor</p>
-                </div>
-             </div>
-             <button className="p-2 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-rose-600 transition-all shadow-sm">
-               <LogOut size={18} />
-             </button>
+             {isAuthenticated ? (
+               <>
+                 <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm hidden md:flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-[10px]">AG</div>
+                    <div className="text-right">
+                       <p className="text-[11px] font-bold text-slate-800 leading-none">Admin Gestor</p>
+                    </div>
+                 </div>
+                 <button 
+                   onClick={handleLogout}
+                   className="p-2 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-rose-600 transition-all shadow-sm"
+                   title="Sair"
+                 >
+                   <LogOut size={18} />
+                 </button>
+               </>
+             ) : (
+               <button 
+                 onClick={() => navigate('/login')}
+                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl font-bold text-xs shadow-lg shadow-blue-500/20 hover:bg-blue-700 transition-all"
+               >
+                 <LogIn size={16} /> Entrar
+               </button>
+             )}
           </div>
         </header>
 
@@ -310,7 +427,10 @@ const AppContent: React.FC = () => {
 
         <div className="space-y-4 max-w-7xl mx-auto">
           <Routes>
-            <Route path="/" element={
+            <Route path="/status" element={<StatusBoardView teamStatus={teamStatus} checkStatus={checkCollaboratorStatus} />} />
+            
+            {/* Protected Routes */}
+            <Route path="/" element={isAuthenticated ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <StatCard 
@@ -381,10 +501,10 @@ const AppContent: React.FC = () => {
                   </div>
                 </div>
               </div>
-            } />
-            <Route path="/status" element={<StatusBoardView teamStatus={teamStatus} checkStatus={checkCollaboratorStatus} />} />
-            <Route path="/calendar" element={<CalendarView absences={absences} />} />
-            <Route path="/pending" element={
+            ) : <Navigate to="/status" />} />
+            
+            <Route path="/calendar" element={isAuthenticated ? <CalendarView absences={absences} /> : <Navigate to="/status" />} />
+            <Route path="/pending" element={isAuthenticated ? (
               <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -444,8 +564,8 @@ const AppContent: React.FC = () => {
                   </table>
                 </div>
               </div>
-            } />
-            <Route path="/history" element={
+            ) : <Navigate to="/status" />} />
+            <Route path="/history" element={isAuthenticated ? (
               <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-200 overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
@@ -488,8 +608,8 @@ const AppContent: React.FC = () => {
                   </table>
                 </div>
               </div>
-            } />
-            <Route path="/reports" element={
+            ) : <Navigate to="/status" />} />
+            <Route path="/reports" element={isAuthenticated ? (
               <div className="space-y-4">
                 <div className="bg-white p-5 rounded-[1.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
                   <div className="flex items-center gap-4">
@@ -506,8 +626,8 @@ const AppContent: React.FC = () => {
                   </button>
                 </div>
               </div>
-            } />
-            <Route path="/users" element={
+            ) : <Navigate to="/status" />} />
+            <Route path="/users" element={isAuthenticated ? (
               <div className="space-y-4">
                 <div className="flex justify-end">
                   <button onClick={() => setIsModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-black transition-all shadow-xl shadow-blue-200 text-sm">
@@ -545,7 +665,10 @@ const AppContent: React.FC = () => {
                   </table>
                 </div>
               </div>
-            } />
+            ) : <Navigate to="/status" />} />
+            
+            {/* Catch-all redirect to status if not authenticated */}
+            <Route path="*" element={<Navigate to={isAuthenticated ? "/" : "/status"} />} />
           </Routes>
         </div>
       </main>
