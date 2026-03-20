@@ -1,6 +1,6 @@
 import { User, Absence, AbsenceStatus } from '../types';
 
-const BASE_URL = '/api/n8n';
+const BASE_URL = 'http://163.176.230.146:5678/webhook';
 
 export const n8nService = {
   async fetchUsers(): Promise<User[]> {
@@ -23,29 +23,40 @@ export const n8nService = {
       return [];
     }
   },
-
+//http://163.176.230.146:5678/webhook/buscaSolicitacoes
   async fetchAbsences(): Promise<Absence[]> {
     try {
-      const res = await fetch(`${BASE_URL}/buscaSolicitacoes`);
+      const res = await fetch(`http://163.176.230.146:5678/webhook/buscaSolicitacoes`);
       if (!res.ok) return [];
       const data = await res.json();
       const dataArray = Array.isArray(data) ? data : (data ? [data] : []);
       
       return dataArray.map((item: any, index: number) => {
-        const parseDate = (d: string, t: string) => {
+        // Função corrigida para lidar com "YYYY-MM-DD HH:mm:ss" ou formatos antigos
+        const parseDate = (d: string) => {
           if (!d || d === 'null' || d === '') return null;
-          const parts = d.split('/');
-          if (parts.length === 3) {
-            const [day, month, year] = parts;
-            const time = t && t !== 'null' && t !== '' ? t : '00:00:00';
-            return `${year}-${month}-${day}T${time}`;
+      
+          // Se a string já contém a data e hora (formato do seu n8n: 2026-03-20 15:30:00)
+          if (d.includes('-') && d.includes(' ')) {
+            return d.replace(' ', 'T'); // Transforma em 2026-03-20T15:30:00
           }
-          return d;
+      
+          // Caso o n8n envie apenas a data em formato DD/MM/YYYY (fallback)
+          if (d.includes('/')) {
+            const parts = d.split('/');
+            if (parts.length === 3) {
+              const [day, month, year] = parts;
+              return `${year}-${month}-${day}T00:00:00`;
+            }
+          }
+      
+          return d; // Retorna o valor original se já estiver em formato ISO
         };
-
-        const start = parseDate(item.dataIni, item.horaIni);
-        const end = parseDate(item.dataFim, item.horaFim);
-
+      
+        // Na sua imagem, os campos que trazem Data+Hora são 'horaIni' e 'horaFim'
+        const start = parseDate(item.horaIni || item.dataIni);
+        const end = parseDate(item.horaFim || item.dataFim);
+      
         let status: AbsenceStatus = 'pending';
         const rawStatus = item.status?.toLowerCase();
         if (rawStatus === 'approved' || rawStatus === 'aproved' || rawStatus === 'aprovado') {
@@ -53,12 +64,13 @@ export const n8nService = {
         } else if (rawStatus === 'rejected' || rawStatus === 'rejeitado') {
           status = 'rejected';
         }
-
+      
         return {
           id: item.id || `abs-${index}`,
           userId: item.email || item.userId,
           userName: item.nome || item.userName || item.email || 'Sem nome',
           type: item.motivo || item.type || 'Ausência',
+          // O new Date(start) agora reconhecerá a hora correta (ex: 15:30)
           startDate: start ? new Date(start).toISOString() : new Date().toISOString(),
           endDate: end ? new Date(end).toISOString() : new Date().toISOString(),
           status: status,

@@ -6,8 +6,8 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const BASE_WEBHOOK_URL = 'http://137.131.223.126:5678/webhook';
-
+const BASE_WEBHOOK_URL = 'http://163.176.230.146:5678/webhook';
+/*http://163.176.230.146:5678/webhook/get-users*/
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -20,6 +20,7 @@ async function startServer() {
       const response = await fetch(`${BASE_WEBHOOK_URL}/get-users`);
       const data = await response.json();
       res.json(data);
+      console.log(data)
     } catch (error) {
       console.error("Proxy error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users from n8n" });

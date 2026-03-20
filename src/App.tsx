@@ -798,7 +798,7 @@ const CalendarView: React.FC<{ absences: Absence[] }> = ({ absences }) => {
                       {new Date(abs.startDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} — {new Date(abs.endDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                     <div className="text-[9px] text-slate-400 font-medium">
-                      {new Date(abs.startDate).toLocaleDateString('pt-BR')}
+                    {new Date(abs.startDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} — {new Date(abs.endDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </td>
                   <td className="px-6 py-3">
