@@ -5,6 +5,7 @@ export interface User {
   name: string;
   email: string;
   role: 'admin' | 'employee';
+  jornada?: string;
   intervalo?: string;
   local?: string;
 }

@@ -9,11 +9,13 @@ export const n8nService = {
       if (!res.ok) return [];
       const data = await res.json();
       const items = Array.isArray(data) ? data : (data ? [data] : []);
+      console.log('->>', items)
       return items.map((item: any) => ({
         id: item.id || item.email || Math.random().toString(36).substr(2, 9),
         name: item.name || item.email || 'Usuário',
         email: item.email,
         role: item.role || 'employee',
+        jornada: item.jornada || '08:00-18:00',
         intervalo: item.intervalo,
         local: item.local
       }));

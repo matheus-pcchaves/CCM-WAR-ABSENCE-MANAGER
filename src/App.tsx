@@ -28,9 +28,9 @@ import { User, Absence, TeamMemberStatus, Tab } from './types';
 import { n8nService } from './services/n8nService';
 
 const INITIAL_USERS: User[] = [
-  { id: '1', name: 'Tacio Santos', email: 'tsantos@ccmtecnologia.com.br', role: 'employee' },
-  { id: '2', name: 'Luciano Martins', email: 'lmartins@ccmtecnologia.com.br', role: 'admin' },
-  { id: '3', name: 'Brenda Costa', email: 'bcosta@ccmtecnologia.com.br', role: 'employee' },
+  { id: '1', name: 'Tacio Santos', email: 'tsantos@ccmtecnologia.com.br', role: 'employee', jornada: '08:00 - 18:00' },
+  { id: '2', name: 'Luciano Martins', email: 'lmartins@ccmtecnologia.com.br', role: 'admin', jornada: '09:00 - 19:00' },
+  { id: '3', name: 'Brenda Costa', email: 'bcosta@ccmtecnologia.com.br', role: 'employee', jornada: '08:00 - 18:00' },
 ];
 
 const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
@@ -112,7 +112,7 @@ const AppContent: React.FC = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [newMember, setNewMember] = useState({ name: '', email: '' });
+  const [newMember, setNewMember] = useState({ name: '', email: '', jornada: '' });
   const [loading, setLoading] = useState(true);
 
   const handleLogin = () => {
@@ -281,12 +281,13 @@ const AppContent: React.FC = () => {
       id: Math.random().toString(36).substr(2, 9), 
       name: newMember.name, 
       email: newMember.email, 
-      role: 'employee' 
+      role: 'employee',
+      jornada: newMember.jornada
     };
   
     setUsers([...users, newUser]);
     n8nService.saveUser(newUser);
-    setNewMember({ name: '', email: '' });
+    setNewMember({ name: '', email: '', jornada: '' });
     setIsModalOpen(false);
   };
 
@@ -707,6 +708,16 @@ const AppContent: React.FC = () => {
                   required
                 />
               </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Jornada</label>
+                <input 
+                  type="text" 
+                  value={newMember.jornada}
+                  onChange={e => setNewMember({...newMember, jornada: e.target.value})}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 outline-none text-sm font-medium transition-all"
+                  placeholder="Ex: 08:00 - 18:00"
+                />
+              </div>
               <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl transition-all shadow-lg shadow-blue-500/20">
                 Efetivar
               </button>
@@ -725,24 +736,25 @@ const App: React.FC = () => (
 );
 
 const CalendarView: React.FC<{ absences: Absence[] }> = ({ absences }) => {
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
 
   const filteredAbsences = useMemo(() => {
-    if (!selectedDate) return [];
+    if (!startDate || !endDate) return [];
     
+    const rangeStart = new Date(startDate + 'T00:00:00').getTime();
+    const rangeEnd = new Date(endDate + 'T23:59:59').getTime();
+
     return absences.filter(abs => {
-      const start = new Date(abs.startDate);
-      const end = new Date(abs.endDate);
-      const target = new Date(selectedDate + 'T00:00:00');
+      if (abs.status !== 'approved') return false;
       
-      const targetTime = target.getTime();
+      const absStart = new Date(abs.startDate).getTime();
+      const absEnd = new Date(abs.endDate).getTime();
       
-      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
-      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
-      
-      return targetTime >= startDay && targetTime <= endDay && abs.status === 'approved';
+      // Overlap condition: absStart <= rangeEnd && absEnd >= rangeStart
+      return absStart <= rangeEnd && absEnd >= rangeStart;
     });
-  }, [absences, selectedDate]);
+  }, [absences, startDate, endDate]);
 
   return (
     <div className="space-y-4">
@@ -751,14 +763,25 @@ const CalendarView: React.FC<{ absences: Absence[] }> = ({ absences }) => {
           <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
             <Calendar size={20} />
           </div>
-          <div className="flex-1">
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Selecionar Data para Consulta</label>
-            <input 
-              type="date" 
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="w-full bg-transparent border-none outline-none text-slate-900 font-black text-lg p-0 cursor-pointer"
-            />
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Início</label>
+              <input 
+                type="date" 
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full bg-transparent border-none outline-none text-slate-900 font-black text-lg p-0 cursor-pointer"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Fim</label>
+              <input 
+                type="date" 
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full bg-transparent border-none outline-none text-slate-900 font-black text-lg p-0 cursor-pointer"
+              />
+            </div>
           </div>
         </div>
         <div className="w-px h-10 bg-slate-100 hidden md:block" />
@@ -795,10 +818,10 @@ const CalendarView: React.FC<{ absences: Absence[] }> = ({ absences }) => {
                   </td>
                   <td className="px-6 py-3">
                     <div className="text-[11px] font-bold text-slate-700">
-                      {new Date(abs.startDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} — {new Date(abs.endDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(abs.startDate).toLocaleDateString('pt-BR')} {new Date(abs.startDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                     <div className="text-[9px] text-slate-400 font-medium">
-                    {new Date(abs.startDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} — {new Date(abs.endDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      até {new Date(abs.endDate).toLocaleDateString('pt-BR')} {new Date(abs.endDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </td>
                   <td className="px-6 py-3">
@@ -814,7 +837,7 @@ const CalendarView: React.FC<{ absences: Absence[] }> = ({ absences }) => {
                   <td colSpan={4} className="px-6 py-12 text-center">
                     <div className="flex flex-col items-center opacity-40">
                       <Calendar size={32} className="text-slate-400 mb-2" />
-                      <p className="text-sm font-bold text-slate-400">Nenhuma ausência aprovada para este dia</p>
+                      <p className="text-sm font-bold text-slate-400">Nenhuma ausência aprovada para este período</p>
                     </div>
                   </td>
                 </tr>
@@ -931,6 +954,7 @@ const StatusBoardView: React.FC<{
               <tr>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Membro</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center border-b border-slate-100">Status</th>
+                <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Jornada</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Motivo</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Intervalo</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Local</th>
@@ -958,6 +982,13 @@ const StatusBoardView: React.FC<{
                         {member.isOnline ? 'On' : 'Off'}
                       </span>
                     </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-black text-slate-800 font-mono">
+                    {member.jornada ? (
+                      <span className="text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-1 rounded-lg">
+                        {member.jornada}
+                      </span>
+                    ) : '—'}
                   </td>
                   <td className="px-6 py-4">
                     {member.isOnline ? (
