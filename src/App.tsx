@@ -518,7 +518,10 @@ const AppContent: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {absences.filter(a => a.status === 'pending').map(abs => (
+                      {absences
+                        .filter(a => a.status === 'pending')
+                        .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+                        .map(abs => (
                         <tr key={abs.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="px-6 py-3">
                             <div className="font-bold text-slate-900 text-base leading-tight">{abs.userName}</div>
@@ -579,7 +582,10 @@ const AppContent: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {absences.filter(a => a.status === 'approved' || a.status === 'rejected').map(abs => (
+                      {absences
+                        .filter(a => a.status === 'approved' || a.status === 'rejected')
+                        .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+                        .map(abs => (
                         <tr key={abs.id} className="hover:bg-slate-50/30">
                           <td className="px-6 py-3 font-bold text-slate-900 text-sm">{abs.userName}</td>
                           <td className="px-6 py-3">
@@ -739,55 +745,113 @@ const CalendarView: React.FC<{ absences: Absence[] }> = ({ absences }) => {
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
 
+  const setRange = (type: 'today' | 'week' | 'month') => {
+    const start = new Date();
+    const end = new Date();
+    
+    if (type === 'today') {
+      // Já está configurado como hoje
+    } else if (type === 'week') {
+      const day = start.getDay();
+      const diff = start.getDate() - day + (day === 0 ? -6 : 1); // Ajuste para segunda-feira
+      start.setDate(diff);
+      end.setDate(start.getDate() + 6);
+    } else if (type === 'month') {
+      start.setDate(1);
+      end.setMonth(start.getMonth() + 1);
+      end.setDate(0);
+    }
+    
+    setStartDate(start.toISOString().split('T')[0]);
+    setEndDate(end.toISOString().split('T')[0]);
+  };
+
   const filteredAbsences = useMemo(() => {
     if (!startDate || !endDate) return [];
     
     const rangeStart = new Date(startDate + 'T00:00:00').getTime();
     const rangeEnd = new Date(endDate + 'T23:59:59').getTime();
 
-    return absences.filter(abs => {
-      if (abs.status !== 'approved') return false;
-      
-      const absStart = new Date(abs.startDate).getTime();
-      const absEnd = new Date(abs.endDate).getTime();
-      
-      // Overlap condition: absStart <= rangeEnd && absEnd >= rangeStart
-      return absStart <= rangeEnd && absEnd >= rangeStart;
-    });
+    return absences
+      .filter(abs => {
+        if (abs.status !== 'approved') return false;
+        
+        const absStart = new Date(abs.startDate).getTime();
+        const absEnd = new Date(abs.endDate).getTime();
+        
+        return absStart <= rangeEnd && absEnd >= rangeStart;
+      })
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
   }, [absences, startDate, endDate]);
 
   return (
     <div className="space-y-4">
-      <div className="bg-white p-5 rounded-[1.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-4">
-        <div className="flex items-center gap-3 flex-1 w-full">
-          <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-            <Calendar size={20} />
-          </div>
-          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="bg-white p-5 rounded-[1.5rem] border border-slate-200 shadow-sm flex flex-col gap-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+              <Calendar size={20} />
+            </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Início</label>
+              <h3 className="text-lg font-black text-slate-900">Filtrar Período</h3>
+              <p className="text-xs text-slate-500 font-medium">Consulte ausências aprovadas por data.</p>
+            </div>
+          </div>
+          
+          <div className="flex flex-wrap gap-2">
+            <button 
+              onClick={() => setRange('today')}
+              className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-xl border border-slate-200 transition-all"
+            >
+              Hoje
+            </button>
+            <button 
+              onClick={() => setRange('week')}
+              className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-xl border border-slate-200 transition-all"
+            >
+              Esta Semana
+            </button>
+            <button 
+              onClick={() => setRange('month')}
+              className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-xl border border-slate-200 transition-all"
+            >
+              Este Mês
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-end">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Data Inicial</label>
+            <div className="relative">
               <input 
                 type="date" 
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-transparent border-none outline-none text-slate-900 font-black text-lg p-0 cursor-pointer"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 font-bold outline-none focus:border-blue-500 transition-all"
               />
             </div>
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Fim</label>
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Data Final</label>
+            <div className="relative">
               <input 
                 type="date" 
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-full bg-transparent border-none outline-none text-slate-900 font-black text-lg p-0 cursor-pointer"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 font-bold outline-none focus:border-blue-500 transition-all"
               />
             </div>
           </div>
-        </div>
-        <div className="w-px h-10 bg-slate-100 hidden md:block" />
-        <div className="text-right hidden md:block">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Resultados</p>
-          <p className="text-lg font-black text-slate-900">{filteredAbsences.length} ausências</p>
+          <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-2xl flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Total Encontrado</p>
+              <p className="text-2xl font-black text-blue-600">{filteredAbsences.length}</p>
+            </div>
+            <div className="text-blue-200">
+              <FileSpreadsheet size={32} />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -954,8 +1018,8 @@ const StatusBoardView: React.FC<{
               <tr>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Membro</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center border-b border-slate-100">Status</th>
-                <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Jornada</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Motivo</th>
+                <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Jornada</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Intervalo</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Local</th>
                 <th className="px-6 py-4 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">Retorno</th>
@@ -983,19 +1047,19 @@ const StatusBoardView: React.FC<{
                       </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-sm font-black text-slate-800 font-mono">
-                    {member.jornada ? (
-                      <span className="text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-1 rounded-lg">
-                        {member.jornada}
-                      </span>
-                    ) : '—'}
-                  </td>
                   <td className="px-6 py-4">
                     {member.isOnline ? (
                       <span className="text-[10px] text-emerald-700 font-black bg-emerald-50 border border-emerald-100 px-3 py-1 rounded-lg">Livre</span>
                     ) : (
                       <span className="font-black text-slate-800 text-[11px] uppercase truncate max-w-[100px] block">{member.currentAbsence?.type}</span>
                     )}
+                  </td>
+                  <td className="px-6 py-4 text-sm font-black text-slate-800 font-mono">
+                    {member.jornada ? (
+                      <span className="text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-1 rounded-lg">
+                        {member.jornada}
+                      </span>
+                    ) : '—'}
                   </td>
                   <td className="px-6 py-4 text-sm font-black text-slate-800 font-mono">
                     {member.intervalo ? (

@@ -15,7 +15,7 @@ export const n8nService = {
         name: item.name || item.email || 'Usuário',
         email: item.email,
         role: item.role || 'employee',
-        jornada: item.jornada || '08:00-18:00',
+        jornada: item.jornada,
         intervalo: item.intervalo,
         local: item.local
       }));
